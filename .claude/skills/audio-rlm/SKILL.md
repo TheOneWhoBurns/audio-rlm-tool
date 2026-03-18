@@ -1,88 +1,106 @@
-# Audio RLM
+---
+name: audio-rlm
+description: Analyze large audio files using RLM patterns. Transcribes with Whisper, explores via persistent REPL, delegates to subcall agents.
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Glob
+  - Grep
+  - Agent
+---
 
-Analyze large audio files using Recursive Language Model patterns. Transcribes audio with Whisper, then explores the transcript through a persistent REPL — keeping the full text outside your context window.
+# audio-rlm
 
-## Arguments
-- `audio=<path>` — Path to an audio file (mp3, wav, m4a, etc.)
-- `query=<question>` — What to find or analyze in the audio
-- `model=<whisper_model>` — Whisper model size (default: small). Options: tiny, base, small, medium, large-v3
-- `language=<code>` — Language code (default: auto-detect)
+Use when the user provides an audio file and wants information extracted from it.
 
-## Allowed tools
-Read, Write, Edit, Bash, Glob, Grep, Agent
+## Inputs
 
-## Instructions
+From `$ARGUMENTS`:
+- `audio=<path>` — path to audio file (required for first use)
+- `query=<question>` — what to find or analyze (required)
+- `model=<size>` — whisper model: tiny, base, small (default), medium, large-v3
+- `name=<name>` — custom transcript name (default: derived from filename)
 
-You are an RLM root orchestrator. Your job is to answer the user's query about an audio file by exploring its transcript efficiently — never loading the full transcript into your context.
+If arguments are missing, ask the user.
 
-### Phase 1: Transcribe (skip if state already exists)
+## Workflow
 
-Run the REPL init command:
+### 1. Transcribe (skip if already done)
+
+Check if transcript exists:
 ```bash
-python .claude/skills/audio-rlm/scripts/audio_repl.py init "<audio_path>" --model <model>
+python .claude/skills/audio-rlm/scripts/repl.py list
 ```
 
-### Phase 2: Scout
-
-Use the REPL to understand the transcript structure:
+If not, transcribe:
 ```bash
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(info())"
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(peek(0, 1000))"
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(peek_segments(0, 30))"
+python .claude/skills/audio-rlm/scripts/transcribe.py "<audio_path>" --model small
 ```
 
-### Phase 3: Search & Navigate
-
-Use targeted exploration based on the query:
+Then load:
 ```bash
-# Search for keywords
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(grep('keyword'))"
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(grep_segments('pattern'))"
-
-# Get a time range
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(time_range(120, 300))"
-
-# Peek at segments
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(peek_segments(50, 20))"
+python .claude/skills/audio-rlm/scripts/repl.py load <name>
 ```
 
-### Phase 4: Chunk & Delegate (for broad queries)
-
-If the query requires understanding the full transcript (summarization, comprehensive extraction), chunk and delegate to subagents:
+### 2. Scout
 
 ```bash
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(write_chunks())"
+python .claude/skills/audio-rlm/scripts/repl.py info
+python .claude/skills/audio-rlm/scripts/repl.py peek 0 30
 ```
 
-Then for each chunk file, spawn an `audio-subcall` agent:
-```
-Agent(subagent_type="audio-subcall", prompt="Analyze chunk: <path>\nQuery: <query>")
-```
+### 3. Search (for targeted queries)
 
-Run subcall agents **in parallel** where possible.
-
-Collect subcall results using the buffer:
 ```bash
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "add_buffer('chunk_0: <summary>')"
+python .claude/skills/audio-rlm/scripts/repl.py grep "keyword"
+python .claude/skills/audio-rlm/scripts/repl.py grep "keyword" --max 20
+python .claude/skills/audio-rlm/scripts/repl.py time 120 300
+python .claude/skills/audio-rlm/scripts/repl.py peek 50 20
 ```
 
-### Phase 5: Synthesize
+### 4. Chunk & delegate (for broad queries)
 
-Review buffered results and produce a final answer:
+When the query needs full-transcript coverage (summaries, theme extraction, comprehensive search):
+
 ```bash
-python .claude/skills/audio-rlm/scripts/audio_repl.py exec "print(get_buffers())"
+python .claude/skills/audio-rlm/scripts/repl.py chunk --size 50
 ```
 
-### Strategy guide
+Then for each chunk path, spawn an `audio-subcall` agent **in parallel**:
+```
+Agent(name="audio-subcall", prompt="Chunk: <path>\nQuery: <query>")
+```
 
-- **Factual lookup** ("what did they say about X?") → grep first, read surrounding segments
-- **Timeline/summary** ("summarize the meeting") → chunk & delegate to subcalls
-- **Specific moment** ("what happened at minute 30?") → time_range directly
-- **Theme extraction** ("what topics were discussed?") → peek start/end, then chunk & delegate
+Store each result:
+```bash
+python .claude/skills/audio-rlm/scripts/repl.py buffer add "<result_summary>"
+```
 
-### Rules
-1. NEVER load the full transcript into your context. Use the REPL helpers.
-2. Prefer grep/time_range over reading full chunks yourself.
-3. When delegating, use the `audio-subcall` agent — it's configured as the sub-LLM.
-4. Keep REPL exec calls focused. One operation per call.
-5. Always cite timestamps in your final answer when possible.
+### 5. Synthesize
+
+```bash
+python .claude/skills/audio-rlm/scripts/repl.py buffer list
+```
+
+Produce the final answer with timestamp citations.
+
+## Decision tree
+
+| Query type | Strategy |
+|---|---|
+| "what did they say about X?" | grep → read surrounding segments |
+| "what happened at minute 30?" | time 1800 1860 |
+| "summarize this" | chunk → delegate → synthesize |
+| "what topics came up?" | peek start + end, then chunk → delegate |
+| "find all mentions of X" | grep --max 50 |
+
+## Rules
+
+1. NEVER read full transcript into context. Use the REPL.
+2. One operation per REPL call — keep calls focused.
+3. Prefer grep/time over reading whole chunks yourself.
+4. Use `audio-subcall` agent for chunk analysis, not inline reading.
+5. Cite timestamps `[HH:MM:SS]` in your final answer.
+6. Run subcall agents in parallel when possible.

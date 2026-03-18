@@ -1,14 +1,13 @@
-# RLM state (transcripts, chunks, pickles)
-.claude/rlm_state/
+# RLM data (transcripts, chunks, session)
+.claude/audio-rlm/
 
 # Python
 __pycache__/
 *.pyc
-*.pyo
 .venv/
 venv/
 
-# Audio files (don't commit large media)
+# Audio files
 *.mp3
 *.wav
 *.m4a
