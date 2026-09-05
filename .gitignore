@@ -17,3 +17,14 @@ venv/
 
 # OS
 .DS_Store
+
+# Local data and configuration
+.env
+.env.*
+.codex/audio-rlm/
+transcripts/
+chunks/
+session.json
+*.mp4
+*.mov
+*.webm

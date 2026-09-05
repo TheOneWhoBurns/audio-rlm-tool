@@ -1,0 +1,7 @@
+interface:
+  display_name: "Audio RLM"
+  short_description: "Analyze local recordings with Whisper transcript search"
+  default_prompt: "Use $audio-rlm to transcribe a local recording, search the transcript, and answer with timestamped findings."
+
+policy:
+  allow_implicit_invocation: true
